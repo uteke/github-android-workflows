@@ -1,0 +1,53 @@
+name: Deploy to Google Play Store
+
+on:
+  workflow_dispatch:
+
+# Environment varibale set in github project
+env:
+  ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
+  ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+  ANDROID_KEYSTORE_PRIVATE_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PRIVATE_KEY_PASSWORD }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: projectname-${{ github.workflow }}-${{ github.head_ref }} # concurrent group name
+      cancel-in-progress: true
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+
+      - name: Decode Keystore
+        id: decode_keystore
+        uses: timheuer/base64-to-file@v1.1
+        with:
+          fileDir: './app'
+          fileName: 'keystore.txt' # keystore filename
+          encodedString: ${{ secrets.KEYSTORE }} # keystore password
+
+      - name: Run tests
+        run: ./gradlew testReleaseUnitTest --continue
+
+      - name: Bundle release
+        run: ./gradlew bundleRelease
+
+      - name: Deploy to Google Play Store in draft
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+          packageName: com.uteke.sample.android
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          track: production
+          status: draft

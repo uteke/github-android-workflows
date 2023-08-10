@@ -1,0 +1,75 @@
+name: Deploy to App Distrib
+
+on:
+  workflow_dispatch: # Action available to trigger manually with release note
+    inputs:
+      release_note:
+        description: 'Release note'
+        required: false
+        type: string
+  push: # Action triggered when commit pushed to main branch
+    branches:
+      - main
+
+# Environment varibale set in github project
+env:
+  ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
+  ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+  ANDROID_KEYSTORE_PRIVATE_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PRIVATE_KEY_PASSWORD }}
+  
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: projectname-${{ github.workflow }}-${{ github.head_ref }} # concurrent group name
+      cancel-in-progress: true
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/gradle-build-action@v2
+
+      - name: Decode Keystore
+        id: decode_keystore
+        uses: timheuer/base64-to-file@v1.1
+        with:
+          fileDir: './app'
+          fileName: 'keystore.txt' # keystore filename
+          encodedString: ${{ secrets.KEYSTORE }} # keystore password
+
+      - name: Run tests
+        run: ./gradlew testReleaseUnitTest --continue
+
+      - name: Assemble release
+        run: ./gradlew assembleRelease
+
+      - name: Create release note
+        id: release-note
+        run: |
+         if [[ ! -z '${{ github.event.inputs.release_note }}' ]]
+         then
+             echo "::set-output name=message::${{ github.event.inputs.release_note }}"
+         else
+             echo "::set-output name=message::`git log -1 --pretty=%B`"
+         fi
+      
+      - name: Download Firebase CLI
+        run: curl -sL firebase.tools | upgrade=true bash
+
+      - name: Deploy to Firebase App Distribution
+        run: |
+          firebase \
+          appdistribution:distribute \
+          "app/build/outputs/apk/release/app-release.apk" \
+          --app ${{ secrets.FIREBASE_APP_ID }} \
+          --token "${{ secrets.FIREBASE_TOKEN }}" \
+          --release-notes "${{ steps.release-note.outputs.message }}" \
